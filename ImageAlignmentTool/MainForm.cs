@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
@@ -156,7 +157,7 @@ namespace ImageAlignmentTool
             e.Surface.Canvas.Clear(SKColors.Coral);
             if (_image != null)
             {
-                e.Surface.Canvas.DrawImage(_image, new SKRect(0, 0, _image.Width, _image.Height), e.Surface.Canvas.DeviceClipBounds);
+                e.Surface.Canvas.DrawImage(_image, new SKRect(0, 0, _image.Width, _image.Height), new SKRect(0, 0, _image.Width, _image.Height));
                 e.Surface.Canvas.DrawCircle(_centerPoint, _circleRadius, new SKPaint {Color = SKColors.Red, Style = SKPaintStyle.Stroke, StrokeWidth = 1});
             }
         }
@@ -185,48 +186,94 @@ namespace ImageAlignmentTool
             if (_image == null || _circleRadius == 0f)
                 return;
 
-
             var bitmap = SKBitmap.FromImage(_image);
-
             var surface = SKSurface.Create(new SKImageInfo(1920, 1080));
             surface.Canvas.Clear(SKColors.Red);
-            for (var x = 0; x < _image.Width; x++)
+
+            for (var x = 0; x < 1920; x++)
             {
-                for (var y = 0; y < _image.Height; y++)
+                for (var y = 0; y < 1080; y++)
                 {
-                    var d = Math.Sqrt(Math.Pow(x - _centerPoint.X, 2) + Math.Pow(y - _centerPoint.Y, 2));
-                    if (d <= _circleRadius) // inside circle
-                    {
-                        var color = bitmap.GetPixel(x, y);
-                        surface.Canvas.DrawRect(x, y, 1, 1, new SKPaint {Color = color});
-                    }
+                    // normalize x, y to equirectangular space
+                    var equirectX = (x - 960) / 960f;
+                    var equirectY = -1 * (y - 540) / 540f;
+
+                    // long/lat
+                    var longitude = equirectX * Math.PI;
+                    var latitude = equirectY * Math.PI / 2;
+
+                    // 3D projection
+                    var pX = Math.Cos(latitude) * Math.Cos(longitude);
+                    var pY = Math.Cos(latitude) * Math.Sin(longitude);
+                    var pZ = Math.Sin(latitude);
+
+                    // fish eye normalized coords
+                    var r = 2 * Math.Atan2(Math.Sqrt(Math.Pow(pX, 2) + Math.Pow(pZ, 2)), pY) / 3.6652; // 210 degrees = 3.6652 radians aperture
+                    var theta = Math.Atan2(pZ, pX);
+
+                    var unitX = r * Math.Cos(theta);
+                    var unitY = r * Math.Sin(theta);
+
+                    if (Math.Abs(unitX) > 1 || Math.Abs(unitY) > 1)
+                        continue;
+
+                    int srcX =(int) Math.Floor(_centerPoint.X + unitX * _circleRadius);
+                    int srcY = (int) Math.Floor( _centerPoint.Y - unitY * _circleRadius);
+
+                    var color = bitmap.GetPixel(srcX, srcY);
+                    surface.Canvas.DrawRect(x, y, 1, 1, new SKPaint {Color = color});
                 }
             }
+//            for (var x = 0; x < _image.Width; x++)
+//            {
+//                for (var y = 0; y < _image.Height; y++)
+//                {
+//                    var d = Math.Sqrt(Math.Pow(x - _centerPoint.X, 2) + Math.Pow(y - _centerPoint.Y, 2));
+//                    if (d <= _circleRadius) // inside circle
+//                    {
+//                        var r = d / _circleRadius;
+//                        var unitX = 0f;
+//                        var unitY = 0f;
+//
+//                        unitX = (x - _centerPoint.X) * _circleRadius;
+//                        unitY = (y - _centerPoint.Y) * _circleRadius * -1;
+//                        // polar angles
+//                        var phi = r * 3.6652 / 2.0; // 210 degrees = 3.652 radians
+//                        var theta = Math.Atan2(unitY, unitX);
+//
+//                        // vector in 3D space
+//                        var perspectiveX = Math.Cos(phi) + Math.Sin(theta);
+//                        var perspectiveY = Math.Cos(phi) + Math.Cos(theta);
+//                        var perspectiveZ = Math.Sin(phi);
+//
+//                        // long / lat
+//                        var longitude = Math.Atan2(perspectiveY, perspectiveX);
+//                        var latitude = Math.Atan2(perspectiveZ, Math.Sqrt(Math.Pow(perspectiveX, 2) + Math.Pow(perspectiveY, 2)));
+//
+//                        var normalizedX = (float) (longitude / Math.PI);
+//                        var normalizedY = (float) (2.0 * latitude / Math.PI);
+//
+//                        float destX = 0;
+//                        float destY = 0;
+//
+//                        if (normalizedX > 0)
+//                            destX = 960 * normalizedX + 960;
+//                        else
+//                            destX = 960 + normalizedX * 960;
+//
+//                        if (normalizedY > 0)
+//                            destY = 540 - normalizedY * 540;
+//                        else
+//                            destY = 540 * -normalizedY + 540;
+//
+//                        var color = bitmap.GetPixel(x, y);
+//                        surface.Canvas.DrawRect(destX, destY, 1, 1, new SKPaint {Color = color});
+//                    }
+//                }
+//            }
 
             _image = surface.Snapshot();
             _skGlControl.Invalidate();
-//            var leftBitmap = _leftImage.ActiveImage;
-//            if (leftBitmap == null)
-//                return;
-
-//            //var pixels = leftBitmap.LockBits(new Rectangle(0, 0, leftBitmap.Width, leftBitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-//            //_image = SKImage.FromPixelCopy(new SKPixmap(new SKImageInfo(leftBitmap.Width, leftBitmap.Height), pixels.Scan0));
-//            //leftBitmap.UnlockBits(pixels);
-//
-//            var surface = SKSurface.Create(new SKImageInfo(1920, 1080));
-//            surface.Canvas.Clear(SKColors.Black);
-//
-//            for (var x = 0; x < leftBitmap.Width; x++)
-//            for (var y = 0; y < leftBitmap.Height; y++)
-//            {
-//                var gdiColor = leftBitmap.GetPixel(x, y);
-//                var skcolor = new SKColor(gdiColor.R, gdiColor.G, gdiColor.B);
-//                surface.Canvas.DrawRect(x, y, 1, 1, new SKPaint {Color = skcolor});
-//            }
-//
-//
-//            _image = surface.Snapshot();
-//            _skGlControl.Invalidate();
         }
     }
 }
