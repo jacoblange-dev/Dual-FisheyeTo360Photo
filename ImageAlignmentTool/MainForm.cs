@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
@@ -39,8 +38,6 @@ namespace ImageAlignmentTool
         };
 
         private SKImage _image;
-
-
         private bool _leftActive;
         private bool _drawing;
         private SKPoint _centerPoint = SKPoint.Empty;
@@ -217,62 +214,18 @@ namespace ImageAlignmentTool
                     if (Math.Abs(unitX) > 1 || Math.Abs(unitY) > 1)
                         continue;
 
-                    int srcX =(int) Math.Floor(_centerPoint.X + unitX * _circleRadius);
-                    int srcY = (int) Math.Floor( _centerPoint.Y - unitY * _circleRadius);
+                    // fisheye normalized coords to src image space.
+                    var srcX = (int) Math.Floor(_centerPoint.X + unitX * _circleRadius);
+                    var srcY = (int) Math.Floor( _centerPoint.Y - unitY * _circleRadius);
 
                     var color = bitmap.GetPixel(srcX, srcY);
                     surface.Canvas.DrawRect(x, y, 1, 1, new SKPaint {Color = color});
                 }
             }
-//            for (var x = 0; x < _image.Width; x++)
-//            {
-//                for (var y = 0; y < _image.Height; y++)
-//                {
-//                    var d = Math.Sqrt(Math.Pow(x - _centerPoint.X, 2) + Math.Pow(y - _centerPoint.Y, 2));
-//                    if (d <= _circleRadius) // inside circle
-//                    {
-//                        var r = d / _circleRadius;
-//                        var unitX = 0f;
-//                        var unitY = 0f;
-//
-//                        unitX = (x - _centerPoint.X) * _circleRadius;
-//                        unitY = (y - _centerPoint.Y) * _circleRadius * -1;
-//                        // polar angles
-//                        var phi = r * 3.6652 / 2.0; // 210 degrees = 3.652 radians
-//                        var theta = Math.Atan2(unitY, unitX);
-//
-//                        // vector in 3D space
-//                        var perspectiveX = Math.Cos(phi) + Math.Sin(theta);
-//                        var perspectiveY = Math.Cos(phi) + Math.Cos(theta);
-//                        var perspectiveZ = Math.Sin(phi);
-//
-//                        // long / lat
-//                        var longitude = Math.Atan2(perspectiveY, perspectiveX);
-//                        var latitude = Math.Atan2(perspectiveZ, Math.Sqrt(Math.Pow(perspectiveX, 2) + Math.Pow(perspectiveY, 2)));
-//
-//                        var normalizedX = (float) (longitude / Math.PI);
-//                        var normalizedY = (float) (2.0 * latitude / Math.PI);
-//
-//                        float destX = 0;
-//                        float destY = 0;
-//
-//                        if (normalizedX > 0)
-//                            destX = 960 * normalizedX + 960;
-//                        else
-//                            destX = 960 + normalizedX * 960;
-//
-//                        if (normalizedY > 0)
-//                            destY = 540 - normalizedY * 540;
-//                        else
-//                            destY = 540 * -normalizedY + 540;
-//
-//                        var color = bitmap.GetPixel(x, y);
-//                        surface.Canvas.DrawRect(destX, destY, 1, 1, new SKPaint {Color = color});
-//                    }
-//                }
-//            }
 
             _image = surface.Snapshot();
+            _centerPoint = SKPoint.Empty;
+            _circleRadius = 0;
             _skGlControl.Invalidate();
         }
     }
