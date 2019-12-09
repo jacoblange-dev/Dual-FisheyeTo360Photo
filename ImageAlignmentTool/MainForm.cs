@@ -1,23 +1,28 @@
 ﻿using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Windows.Forms;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
 
 namespace ImageAlignmentTool
 {
+
+    /*
+     * todo:
+     * two circles processed
+     * merging
+     * output
+     * 360 photos
+     * responsive UI
+     * code cleanup
+     */
     public class MainForm : Form
     {
         private readonly Button _openButton = new Button
         {
             Text = "Open",
-            AutoSize = true
-        };
-
-        private readonly Button _leftButton = new Button
-        {
-            Text = "Left",
             AutoSize = true
         };
 
@@ -32,16 +37,7 @@ namespace ImageAlignmentTool
             AutoSize = true
         };
 
-        private readonly Label _circleInfo = new Label
-        {
-            AutoSize = true,
-        };
-
         private SKImage _image;
-        private bool _leftActive;
-        private bool _drawing;
-        private SKPoint _centerPoint = SKPoint.Empty;
-        private float _circleRadius = 0;
 
         public MainForm()
         {
@@ -52,7 +48,6 @@ namespace ImageAlignmentTool
         {
             base.Dispose(disposing);
             _openButton.Click -= OpenButtonOnClick;
-            _leftButton.Click -= LeftButtonOnClick;
             _mergeButton.Click -= MergeButtonOnClick;
         }
 
@@ -66,87 +61,13 @@ namespace ImageAlignmentTool
             _openButton.Click += OpenButtonOnClick;
             Controls.Add(_openButton);
 
-            _leftButton.Location = new Point(150, 5);
-            _leftButton.Click += LeftButtonOnClick;
-            Controls.Add(_leftButton);
-
             _skGlControl.Location = new Point(15, 30);
             _skGlControl.PaintSurface += SKGlControlOnPaintSurface;
-            _skGlControl.MouseDown += SKGlControlOnMouseDown;
-            _skGlControl.MouseMove += SKGlControlOnMouseMove;
-            _skGlControl.MouseUp += SKGlControlOnMouseUp;
-            _skGlControl.KeyDown += SKGlControlOnKeyDown;
             Controls.Add(_skGlControl);
 
             _mergeButton.Location = new Point(250, 5);
             _mergeButton.Click += MergeButtonOnClick;
             Controls.Add(_mergeButton);
-
-            _circleInfo.Location = new Point(2000, 500);
-            Controls.Add(_circleInfo);
-        }
-
-        private void SKGlControlOnKeyDown(object sender, KeyEventArgs e)
-        {
-            switch (e.KeyCode)
-            {
-                case Keys.W:
-                    _centerPoint.Y -= 1;
-                    break;
-                case Keys.A:
-                    _centerPoint.X -= 1;
-                    break;
-                case Keys.S:
-                    _centerPoint.Y += 1;
-                    break;
-                case Keys.D:
-                    _centerPoint.X += 1;
-                    break;
-                case Keys.E:
-                    _circleRadius += 1;
-                    break;
-                case Keys.Q:
-                    _circleRadius -= 1;
-                    break;
-            }
-
-            _circleInfo.Text = $"{_centerPoint} + {_circleRadius}";
-            _skGlControl.Invalidate();
-        }
-
-        private void SKGlControlOnMouseUp(object sender, MouseEventArgs e)
-        {
-            _drawing = false;
-            _circleInfo.Text = $"{_centerPoint} + {_circleRadius}";
-        }
-
-        private void SKGlControlOnMouseMove(object sender, MouseEventArgs e)
-        {
-            if (!_drawing)
-                return;
-
-            _circleRadius = SKPoint.Distance(_centerPoint, e.Location.ToSKPoint());
-            _skGlControl.Invalidate();
-        }
-
-        private void SKGlControlOnMouseDown(object sender, MouseEventArgs e)
-        {
-            if (!_leftActive)
-                return;
-
-            _leftActive = false;
-            _drawing = true;
-            _centerPoint = e.Location.ToSKPoint();
-            _skGlControl.Invalidate();
-            _skGlControl.Focus();
-        }
-
-        private void LeftButtonOnClick(object sender, EventArgs e)
-        {
-            if (_image == null)
-                return;
-
-            _leftActive = true;
         }
 
         private void SKGlControlOnPaintSurface(object sender, SKPaintGLSurfaceEventArgs e)
@@ -155,7 +76,6 @@ namespace ImageAlignmentTool
             if (_image != null)
             {
                 e.Surface.Canvas.DrawImage(_image, new SKRect(0, 0, _image.Width, _image.Height), new SKRect(0, 0, _image.Width, _image.Height));
-                e.Surface.Canvas.DrawCircle(_centerPoint, _circleRadius, new SKPaint {Color = SKColors.Red, Style = SKPaintStyle.Stroke, StrokeWidth = 1});
             }
         }
 
@@ -180,20 +100,67 @@ namespace ImageAlignmentTool
 
         private void MergeButtonOnClick(object sender, EventArgs e)
         {
-            if (_image == null || _circleRadius == 0f)
+            if (_image == null)
                 return;
 
-            var bitmap = SKBitmap.FromImage(_image);
-            var surface = SKSurface.Create(new SKImageInfo(1920, 1080));
-            surface.Canvas.Clear(SKColors.Red);
-
-            for (var x = 0; x < 1920; x++)
+            var left = ProjectFisheye(new SKPoint(480, 480), 480, (float) Math.PI / 2); // 90 degrees clockwise THETA S assumption
+            using (var data = left.Encode(SKEncodedImageFormat.Jpeg, 80))
+            using (var stream = File.OpenWrite(@"C:\users\jlange\desktop\left.jpg"))
             {
-                for (var y = 0; y < 1080; y++)
+                data.SaveTo(stream);
+            }
+
+            var right = ProjectFisheye(new SKPoint(1440, 480), 480, (float) -Math.PI / 2); // -90 degress clockwise
+            using (var data = right.Encode(SKEncodedImageFormat.Jpeg, 80))
+            using (var stream = File.OpenWrite(@"C:\users\jlange\desktop\right.jpg"))
+            {
+                data.SaveTo(stream);
+            }
+
+            var mergedProjection = SKSurface.Create(new SKImageInfo(960, 480));
+            mergedProjection.Canvas.DrawImage(left, new SKRect(0, 0, 480, 480), new SKRect(480, 0, 960, 480));
+            mergedProjection.Canvas.DrawImage(right, new SKRect(0, 0, 480, 480), new SKRect(0, 0, 480, 480));
+
+            _image.Dispose();
+            _image = mergedProjection.Snapshot();
+
+            using (var data = _image.Encode(SKEncodedImageFormat.Jpeg, 80))
+            using (var stream = File.OpenWrite(@"C:\users\jlange\desktop\merged.jpg"))
+            {
+                data.SaveTo(stream);
+            }
+
+            _skGlControl.Invalidate();
+        }
+
+        private unsafe SKImage ProjectFisheye(SKPoint centerPoint, float radius, float radians)
+        {
+            var srcInfo = new SKImageInfo(_image.Width, _image.Height, SKImageInfo.PlatformColorType, SKAlphaType.Unpremul);
+            // rows, columns, 4byte color
+            var srcData = new byte[_image.Height, _image.Width, 4];
+            fixed(byte* ptr = srcData)
+            {
+                if (!_image.ReadPixels(srcInfo, new IntPtr(ptr), _image.Width * 4, 0, 0))
+                    return null;
+            }
+
+            var dstWidth = (int) Math.Floor(2 * radius);
+            var dstHeight = dstWidth / 2;
+
+            var rows = dstHeight;
+            var columns = dstWidth;
+            // rows, columns, 4byte color
+            var dstData = new byte[rows, columns, 4];
+
+            for (var row = 0; row < rows; row++)
+            {
+                for (var column = 0; column < columns; column++)
                 {
                     // normalize x, y to equirectangular space
-                    var equirectX = (x - 960) / 960f;
-                    var equirectY = -1 * (y - 540) / 540f;
+                    var dstWidthHalf = dstWidth / 2.0;
+                    var dstHeightHalf = dstHeight / 2.0;
+                    var equirectX = -1 * (column - dstWidthHalf) / dstWidthHalf;
+                    var equirectY = -1 * (row - dstHeightHalf) / dstHeightHalf;
 
                     // long/lat
                     var longitude = equirectX * Math.PI;
@@ -208,25 +175,48 @@ namespace ImageAlignmentTool
                     var r = 2 * Math.Atan2(Math.Sqrt(Math.Pow(pX, 2) + Math.Pow(pZ, 2)), pY) / 3.6652; // 210 degrees = 3.6652 radians aperture
                     var theta = Math.Atan2(pZ, pX);
 
-                    var unitX = r * Math.Cos(theta);
-                    var unitY = r * Math.Sin(theta);
+                    var unitCirclePoint = new SKPoint((float) (r * Math.Cos(theta)), (float) (r * Math.Sin(theta)));
 
-                    if (Math.Abs(unitX) > 1 || Math.Abs(unitY) > 1)
+                    if (Math.Abs(unitCirclePoint.X) > 1 || Math.Abs(unitCirclePoint.Y) > 1)
                         continue;
 
-                    // fisheye normalized coords to src image space.
-                    var srcX = (int) Math.Floor(_centerPoint.X + unitX * _circleRadius);
-                    var srcY = (int) Math.Floor( _centerPoint.Y - unitY * _circleRadius);
+                    // compensate for rotation of fish eye
+                    var matrix = SKMatrix.MakeRotation(radians);
+                    unitCirclePoint = matrix.MapPoint(unitCirclePoint);
 
-                    var color = bitmap.GetPixel(srcX, srcY);
-                    surface.Canvas.DrawRect(x, y, 1, 1, new SKPaint {Color = color});
+                    // fisheye normalized coords to src image space.
+                    var srcX = (int) Math.Floor(centerPoint.X + unitCirclePoint.X * radius);
+                    var srcY = (int) Math.Floor(centerPoint.Y - unitCirclePoint.Y * radius);
+
+                    // clamp to image bounds
+                    if (srcX < 0 || srcX >= _image.Width || srcY < 0 || srcY >= _image.Height)
+                        continue;
+
+                    // y, x flipped cause doing row column
+                    var b = srcData[srcY, srcX, 0];
+                    var g = srcData[srcY, srcX, 1];
+                    var red = srcData[srcY, srcX, 2];
+                    var a = srcData[srcY, srcX, 3];
+
+                    dstData[row, column, 0] = b;
+                    dstData[row, column, 1] = g;
+                    dstData[row, column, 2] = red;
+                    dstData[row, column, 3] = a;
                 }
             }
 
-            _image = surface.Snapshot();
-            _centerPoint = SKPoint.Empty;
-            _circleRadius = 0;
-            _skGlControl.Invalidate();
+            var surface = SKSurface.Create(new SKImageInfo(dstWidth, dstHeight));
+            surface.Canvas.Clear(SKColors.DarkSlateGray);
+            var dstBitmap = new SKBitmap(dstWidth, dstHeight);
+
+            fixed (byte* ptr = dstData)
+            {
+                dstBitmap.SetPixels((IntPtr) ptr);
+            }
+
+            surface.Canvas.DrawBitmap(dstBitmap, 0, 0);
+
+            return surface.Snapshot();
         }
     }
 }
