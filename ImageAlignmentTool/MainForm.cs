@@ -8,16 +8,39 @@ using SkiaSharp.Views.Desktop;
 
 namespace ImageAlignmentTool
 {
+    public class ViewAs360Dialog : Form
+    {
+        private readonly SphericalPhotoPreviewControl _previewControl = new SphericalPhotoPreviewControl();
 
-    /*
-     * todo:
-     * two circles processed
-     * merging
-     * output
-     * 360 photos
-     * responsive UI
-     * code cleanup
-     */
+        public ViewAs360Dialog(Bitmap photo)
+        {
+            SetupControls(photo);
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            _previewControl.StopPreview();
+            base.OnHandleDestroyed(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            _previewControl.Dispose();
+        }
+
+        private void SetupControls(Bitmap photo)
+        {
+            AutoScaleMode = AutoScaleMode.Font;
+            Text = "360 View";
+            Size = new Size(1000, 1000);
+
+            _previewControl.Size = new Size(1000, 1000);
+            Controls.Add(_previewControl);
+            _previewControl.LoadPreview(photo);
+        }
+    }
+
     public class MainForm : Form
     {
         private readonly Button _openButton = new Button
@@ -37,18 +60,17 @@ namespace ImageAlignmentTool
             AutoSize = true
         };
 
+        private readonly Button _viewAs360Button = new Button
+        {
+            Text = "View as 360",
+            AutoSize = true
+        };
+
         private SKImage _image;
 
         public MainForm()
         {
             SetupControls();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            base.Dispose(disposing);
-            _openButton.Click -= OpenButtonOnClick;
-            _mergeButton.Click -= MergeButtonOnClick;
         }
 
         private void SetupControls()
@@ -61,21 +83,56 @@ namespace ImageAlignmentTool
             _openButton.Click += OpenButtonOnClick;
             Controls.Add(_openButton);
 
+            _mergeButton.Location = new Point(90, 5);
+            _mergeButton.Click += MergeButtonOnClick;
+            Controls.Add(_mergeButton);
+
+            _viewAs360Button.Location = new Point(165, 5);
+            _viewAs360Button.Click += ViewAs360ButtonOnClick;
+            Controls.Add(_viewAs360Button);
+
             _skGlControl.Location = new Point(15, 30);
             _skGlControl.PaintSurface += SKGlControlOnPaintSurface;
             Controls.Add(_skGlControl);
+        }
 
-            _mergeButton.Location = new Point(250, 5);
-            _mergeButton.Click += MergeButtonOnClick;
-            Controls.Add(_mergeButton);
+        private void ViewAs360ButtonOnClick(object sender, EventArgs e)
+        {
+            if (_image == null || _image.Width / _image.Height != 2)
+                return;
+
+            Bitmap bitmap;
+            unsafe
+            {
+                var info = new SKImageInfo(_image.Width, _image.Height, SKImageInfo.PlatformColorType, SKAlphaType.Unpremul);
+                // rows, columns, 4byte color
+                var data = new byte[_image.Height * _image.Width * 4];
+                fixed(byte* ptr = data)
+                {
+                    if (!_image.ReadPixels(info, new IntPtr(ptr), _image.Width * 4, 0, 0))
+                        return;
+
+                    bitmap = new Bitmap(_image.Width, _image.Height, _image.Width * 4, PixelFormat.Format32bppArgb, new IntPtr(ptr));
+                }
+            }
+
+            var dialog = new ViewAs360Dialog(bitmap);
+            dialog.ShowDialog(this);
+            dialog.Dispose();
         }
 
         private void SKGlControlOnPaintSurface(object sender, SKPaintGLSurfaceEventArgs e)
         {
-            e.Surface.Canvas.Clear(SKColors.Coral);
+            e.Surface.Canvas.Clear(SKColors.DarkSlateGray);
             if (_image != null)
             {
-                e.Surface.Canvas.DrawImage(_image, new SKRect(0, 0, _image.Width, _image.Height), new SKRect(0, 0, _image.Width, _image.Height));
+                // fit image size to 1920 x 1080
+                var widthScale = 1920 / _image.Width;
+                var heightScale = 1080 / _image.Height;
+
+                var scale = Math.Max(widthScale, heightScale);
+
+                e.Surface.Canvas.DrawImage(_image, new SKRect(0, 0, _image.Width, _image.Height), new SKRect(0, 0, _image.Width * scale, _image.Height * scale));
             }
         }
 
@@ -111,7 +168,7 @@ namespace ImageAlignmentTool
             }
 
             var right = ProjectFisheye(new SKPoint(1440, 480), 480, (float) -Math.PI / 2); // -90 degress clockwise
-            using (var data = right.Encode(SKEncodedImageFormat.Jpeg, 80))
+            using (var data = right.Encode(SKEncodedImageFormat.Jpeg, 100))
             using (var stream = File.OpenWrite(@"C:\users\jlange\desktop\right.jpg"))
             {
                 data.SaveTo(stream);
@@ -124,7 +181,7 @@ namespace ImageAlignmentTool
             _image.Dispose();
             _image = mergedProjection.Snapshot();
 
-            using (var data = _image.Encode(SKEncodedImageFormat.Jpeg, 80))
+            using (var data = _image.Encode(SKEncodedImageFormat.Jpeg, 100))
             using (var stream = File.OpenWrite(@"C:\users\jlange\desktop\merged.jpg"))
             {
                 data.SaveTo(stream);
@@ -172,7 +229,7 @@ namespace ImageAlignmentTool
                     var pZ = Math.Sin(latitude);
 
                     // fish eye normalized coords
-                    var r = 2 * Math.Atan2(Math.Sqrt(Math.Pow(pX, 2) + Math.Pow(pZ, 2)), pY) / 3.6652; // 210 degrees = 3.6652 radians aperture
+                    var r = 2 * Math.Atan2(Math.Sqrt(Math.Pow(pX, 2) + Math.Pow(pZ, 2)), pY) / (202 * Math.PI / 180); // 202 degrees aperture for ricoh theta s
                     var theta = Math.Atan2(pZ, pX);
 
                     var unitCirclePoint = new SKPoint((float) (r * Math.Cos(theta)), (float) (r * Math.Sin(theta)));
